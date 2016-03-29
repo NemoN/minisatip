@@ -329,7 +329,6 @@ void close_adapter(int na)
 	ad->old_diseqc = -1;
 	ad->old_hiband = -1;
 	ad->old_pol = -1;
-	mutex_unlock(&ad->mutex);
 	mutex_destroy(&ad->mutex);
 	//      if(a[na]->buf)free1(a[na]->buf);a[na]->buf=NULL;
 	LOG("done closing adapter %d", na);
@@ -337,12 +336,13 @@ void close_adapter(int na)
 
 int getAdaptersCount()
 {
-	int i, j, k, sys;
+	int i, j, k;
+	char sys;
 	adapter *ad;
 	char fes[20][MAX_ADAPTERS];
 	char ifes[20];
 	char order[] =
-	{ SYS_DVBS2, SYS_DVBT, SYS_DVBC_ANNEX_A, SYS_DVBT2, SYS_DVBC2, -1 };
+	{ SYS_DVBS2, SYS_DVBT, SYS_DVBC_ANNEX_A, SYS_DVBT2, SYS_DVBC2 };
 
 	memset(&ifes, 0, sizeof(ifes));
 	memset(&fe_map, -1, sizeof(fe_map));
@@ -394,7 +394,7 @@ int getAdaptersCount()
 
 		}
 	k = 0;
-	for (i = 0; order[i] > 0; i++)
+	for (i = 0; i < sizeof(order); i++)
 	{
 		sys = order[i];
 		for (j = 0; j < ifes[sys]; j++)
@@ -628,6 +628,14 @@ int update_pids(int aid)
 		}
 
 	ad->commit(ad);
+
+#ifndef DISABLE_TABLES
+	int ep;
+	if (!get_all_pids(ad, &ep, 1)) // no pids enabled, set pids type to 0
+	{
+		reset_pids_type(ad->id, 0);
+	}
+#endif
 
 	return 0;
 }
@@ -1090,7 +1098,7 @@ void free_all_adapters()
 
 #ifndef DISABLE_NETCVCLIENT
 	fprintf(stderr, "\n\nREEL: recv_exit\n");
-	if (recv_exit())
+	if (opts.netcv_if && recv_exit())
 		LOGL(0, "Netceiver exit failed");
 #endif
 }

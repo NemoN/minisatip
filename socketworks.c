@@ -366,23 +366,25 @@ int init_sock = 0;
 
 void sockets_lock(sockets *ss)
 {
+	int rv;
 	mutex_lock(&ss->mutex);
 	if (ss->lock)
-		if (mutex_lock(ss->lock))
+		if ((rv = mutex_lock(ss->lock)))
 		{
-			LOG("sockets_lock: Changing socket %d lock %p to NULL", ss->id,
-					ss->lock);
+			LOG("%s: Changing socket %d lock %p to NULL error %d %s",
+					__FUNCTION__, ss->id, ss->lock, rv, strerror(rv));
 			ss->lock = NULL;
 		}
 }
 
 void sockets_unlock(sockets *ss)
 {
+	int rv;
 	if (ss->lock)
-		if (mutex_unlock(ss->lock))
+		if ((rv = mutex_unlock(ss->lock)))
 		{
-			LOG("sockets_unlock: Changing socket %d lock %p to NULL", ss->id,
-					ss->lock);
+			LOG("%s: Changing socket %d lock %p to NULL error %d %s",
+					__FUNCTION__, ss->id, ss->lock, rv, strerror(rv));
 			ss->lock = NULL;
 		}
 	mutex_unlock(&ss->mutex);
@@ -490,7 +492,6 @@ int sockets_del(int sock)
 	ss->lock = NULL;
 	LOG("sockets_del: %d Last open socket is at index %d current_handle %d",
 			sock, i, so);
-	mutex_unlock(&ss->mutex);
 	mutex_destroy(&ss->mutex);
 	mutex_unlock(&s_mutex);
 	return 0;
@@ -563,7 +564,7 @@ void *select_and_execute(void *arg)
 		//              LOG("select returned %d",rv);
 		if (rv > 0)
 			while (++i < max_sock)
-				if ((pf[i].fd >=0) && pf[i].revents)
+				if ((pf[i].fd >= 0) && pf[i].revents)
 				{
 					sockets *ss = s[i];
 					if (!ss)
@@ -849,15 +850,15 @@ get_current_timestamp_log(void)
 	return date_str;
 }
 
-int sockets_del_for_sid(int ad)
+int sockets_del_for_sid(int sid)
 {
 	int i;
 	sockets *ss;
-	if (ad < 0)
+	if (sid < 0)
 		return 0;
 	for (i = 0; i < MAX_SOCKS; i++)
-		if ((ss = get_sockets(i)) && ss->sid >= 0 && ss->type != TYPE_DVR
-				&& ss->sid == ad)
+		if ((ss = get_sockets(i)) && ss->sid >= 0 && ss->type == TYPE_RTSP
+				&& ss->sid == sid)
 		{
 			ss->timeout_ms = 1;	//trigger close of the socket after this operation ends, otherwise we might close an socket on which we run action
 			ss->sid = -1;// make sure the stream is not closed in the future to prevent closing the stream created by another socket

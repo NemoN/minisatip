@@ -103,7 +103,10 @@ STmpinfo *getFreeItemPos(int64_t key)
 		{
 			sinfo[i].id = i;
 			sinfo[i].timeout = 0;
-			LOGL(2, "Requested new Item for key %jX, returning %d", key, i);
+			LOGL(2,
+					"Requested new Item for key %jX, returning %d (enabled %d last_updated %jd timeout %d tick %jd)",
+					key, i, sinfo[i].enabled, sinfo[i].last_updated,
+					sinfo[i].timeout, tick);
 			return sinfo + i;
 		}
 	return NULL;
@@ -389,20 +392,20 @@ void print_trace(void)
 	size_t size;
 	char **strings;
 	size_t i;
-#if !defined(__mips__) && !defined(NO_BACKTRACE)
+#if !defined(NO_BACKTRACE)
 
 	size = backtrace(array, 10);
 
-	LOGL(0, "Obtained %zd stack frames.\n", size);
+	printf("Obtained %zd stack frames.\n", size);
 
 	for (i = 0; i < size; i++)
 	{
-		LOGL(0, "%p : ", array[i]);
+		printf("%p : ", array[i]);
 		if (addr2line(pn, array[i]))
-			LOGL(0, "\n");
+			printf("\n");
 	}
 #else
-	LOGL(0, " No backtrace defined\n");
+	printf( " No backtrace defined\n");
 #endif
 }
 
@@ -421,8 +424,8 @@ void posix_signal_handler(int sig, siginfo_t * siginfo, ucontext_t * ctx)
 	sp = ctx->uc_mcontext.gregs[29];
 	ip = ctx->uc_mcontext.pc;
 #endif
-	LOGL(0, "RECEIVED SIGNAL %d - SP=%lX IP=%lX\n", sig,
-			(long unsigned int ) sp, (long unsigned int ) ip);
+	printf("RECEIVED SIGNAL %d - SP=%lX IP=%lX\n", sig, (long unsigned int) sp,
+			(long unsigned int) ip);
 
 	print_trace();
 	exit(1);
@@ -622,7 +625,7 @@ int endswith(char *src, char *with)
 extern _symbols adapters_sym[];
 extern _symbols minisatip_sym[];
 extern _symbols stream_sym[];
-#ifndef DISABLE_DVBCSA
+#ifndef DISABLE_DVBAPI
 extern _symbols dvbapi_sym[];
 #endif
 #ifndef DISABLE_SATIPCLIENT
@@ -631,7 +634,7 @@ extern _symbols satipc_sym[];
 
 _symbols *sym[] =
 { adapters_sym, stream_sym, minisatip_sym,
-#ifndef DISABLE_DVBCSA
+#ifndef DISABLE_DVBAPI
 		dvbapi_sym,
 #endif
 #ifndef DISABLE_SATIPCLIENT
@@ -757,7 +760,7 @@ void * get_var_address(char *var, float *multiplier, int * type, void *storage,
 int var_eval(char *orig, int len, char *dest, int max_len)
 {
 	char var[VAR_LENGTH + 1];
-	char storage[64*5]; // variable max len
+	char storage[64 * 5]; // variable max len
 	float multiplier;
 	int type = 0;
 	void *p;
@@ -891,14 +894,15 @@ int closefile(char *mem, int len)
 int mutex_init(SMutex* mutex)
 {
 	int rv;
+	pthread_mutexattr_t attr;
+
 	if (opts.no_threads)
 		return 0;
-	pthread_mutexattr_t attr;
-	pthread_mutexattr_init(&attr);
-	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-
 	if (mutex->enabled)
 		return 1;
+
+	pthread_mutexattr_init(&attr);
+	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
 
 	if ((rv = pthread_mutex_init(&mutex->mtx, &attr)))
 	{
@@ -906,6 +910,7 @@ int mutex_init(SMutex* mutex)
 		return rv;
 	}
 
+	mutex->create_time = getTick();
 	mutex->enabled = 1;
 	mutex->state = 0;
 	LOG("Mutex init %p", mutex);
@@ -946,6 +951,8 @@ int mutex_lock1(char *FILE, int line, SMutex* mutex)
 	mutex->line = line;
 	mutex->state = 1;
 	mutex->tid = tid;
+	mutex->lock_time = getTick();
+
 	mutexes[imtx++] = mutex;
 	if (start_lock > 0)
 		LOGL(4, "%s:%d Locked %p after %ld ms", FILE, line, mutex,
@@ -968,6 +975,7 @@ int mutex_unlock1(char *FILE, int line, SMutex* mutex)
 	}
 	else
 		LOGL(3, "%s:%d Unlock disabled mutex %p", FILE, line, mutex);
+
 	if (rv != 0 && rv != 1 && rv != -1)
 	{
 		LOGL(3, "mutex_unlock failed at %s:%d: %d %s", FILE, line, rv,
@@ -1011,7 +1019,14 @@ int mutex_destroy(SMutex* mutex)
 		imtx--;
 	}
 
-	pthread_mutex_unlock(&mutex->mtx);
+	if ((rv = pthread_mutex_unlock(&mutex->mtx)) != 1)
+		LOG("%s: pthread_mutex_unlock 1 failed for %p with error %d %s",
+				__FUNCTION__, mutex, rv, strerror(rv));
+
+	if ((rv = pthread_mutex_unlock(&mutex->mtx)) != 1)
+		LOG("%s: pthread_mutex_unlock 2 failed for %p with error %d %s",
+				__FUNCTION__, mutex, rv, strerror(rv));
+
 	LOGL(4, "Destroying mutex %p", mutex);
 	if ((rv = pthread_mutex_destroy(&mutex->mtx)))
 	{
