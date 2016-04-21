@@ -72,6 +72,7 @@ static const struct option long_options[] =
 #endif
 #ifndef DISABLE_SATIPCLIENT
 		{ "satip-servers", required_argument, NULL, 's' },
+		{ "satip-tcp", no_argument, NULL, 'O' },
 #endif
 #ifndef DISABLE_NETCVCLIENT
 		{ "netceiver", required_argument, NULL, 'n' },
@@ -116,7 +117,7 @@ static const struct option long_options[] =
 #define SATIPCLIENT_OPT 's'
 #define NETCVCLIENT_OPT 'n'
 #define PRIORITY_OPT 'i'
-#define PRIORITY_OPT 'i'
+#define SATIP_TCP_OPT 'O'
 #define DOCUMENTROOT_OPT 'R'
 #define XML_OPT 'X'
 #define THREADS_OPT 'T'
@@ -128,6 +129,11 @@ char *built_info[] =
 		"Built without dvbcsa",
 #else 
 		"Built with dvbcsa",
+#endif
+#ifdef DISABLE_DVBCA
+		"Built without CI",
+#else
+		"Built with CI",
 #endif
 #ifdef DISABLE_DVBAPI
 		"Built without dvbapi",
@@ -286,6 +292,7 @@ Help\n\
 	- specifies 1 dvbt satip server  with address 192.168.1.3:554\n\
 	- specifies 1 dvbc satip server  with address 192.168.1.4:554\n\
 \n\
+* -O --satip-tcp Use RTSP over TCP instead of UDP for data transport \n\
 "
 #endif
 			"\
@@ -360,6 +367,7 @@ void set_options(int argc, char *argv[])
 	opts.clean_psi = 0;
 	opts.satip_addpids = 1;
 	opts.satip_setup_pids = 0;
+	opts.satip_rtsp_over_tcp = 0;
 	opts.output_buffer = 512 * 1024;
 	opts.satip_servers[0] = 0;
 	opts.document_root = "html";
@@ -379,7 +387,7 @@ void set_options(int argc, char *argv[])
 	memset(opts.playlist, 0, sizeof(opts.playlist));
 
 	while ((opt = getopt_long(argc, argv,
-			"flr:a:td:w:p:s:n:hc:b:m:p:e:x:u:j:o:gy:i:q:D:VR:S:TX:Y:",
+			"flr:a:td:w:p:s:n:hc:b:m:p:e:x:u:j:o:gy:i:q:D:VR:S:TX:Y:O",
 			long_options, NULL)) != -1)
 	{
 		//              printf("options %d %c %s\n",opt,opt,optarg);
@@ -565,6 +573,15 @@ void set_options(int argc, char *argv[])
 			else
 				sprintf(opts.satip_servers, "%s", optarg);
 
+			break;
+
+		case SATIP_TCP_OPT:
+#ifdef DISABLE_SATIPCLIENT
+			LOGL(0, "%s was not compiled with satip client support, please change the Makefile", app_name);
+			exit (0);
+
+#endif
+			opts.satip_rtsp_over_tcp = 1;
 			break;
 
 		case NETCVCLIENT_OPT:
@@ -880,6 +897,9 @@ int read_http(sockets * s)
 {
 	char *arg[50];
 	char buf[2000]; // the XML should not be larger than 1400 as it will create problems
+	char url[300];
+	char *space;
+	int is_head = 0;
 	static char *xml =
 			"<?xml version=\"1.0\"?>"
 					"<root xmlns=\"urn:schemas-upnp-org:device-1-0\" configId=\"0\">"
@@ -916,14 +936,35 @@ int read_http(sockets * s)
 		s->flags = s->flags | 1;
 		return 0;
 	}
-
-	if (strncasecmp((const char*) s->buf, "GET ", 4) == 0
-			&& strstr((const char*) s->buf, "/?"))
+	url[0] = 0;
+	space = strchr(s->buf, ' ');
+	if(space)
 	{
-		read_rtsp(s);
-		return 0;
+		int i = 0;
+		space++;
+		while( space[i] && space[i] != ' ')
+		{
+			url[i] = space[i];
+			if( i++ > sizeof(url) - 3)
+				break;
+		}
+		url[i] = 0;
 	}
 
+	if (strstr(url, "/?") && !strncasecmp((const char*) s->buf, "GET ", 4))
+	{
+			read_rtsp(s);
+			return 0;
+	}
+
+	if(!strncasecmp((const char*) s->buf, "HEAD ", 5))
+		is_head = 1;
+
+	if (is_head && strstr(url, "/?"))
+	{
+		http_response(s, 200, NULL, NULL, 0, 0);
+		return 0;	
+	}
 	s->rlen = 0;
 
 	LOG("read HTTP from %d sid: %d: ", s->sock, s->sid);
@@ -931,7 +972,7 @@ int read_http(sockets * s)
 
 	split(arg, (char*) s->buf, 50, ' ');
 //      LOG("args: %s -> %s -> %s",arg[0],arg[1],arg[2]);
-	if (strncmp(arg[0], "GET", 3) != 0)
+	if (strncmp(arg[0], "GET", 3) && !is_head)
 		REPLY_AND_RETURN(503);
 	if (uuidi == 0)
 		ssdp_discovery(s);
@@ -943,7 +984,7 @@ int read_http(sockets * s)
 		extern int tuner_s2, tuner_t, tuner_c, tuner_t2, tuner_c2;
 		char adapters[400];
 		char headers[500];
-
+		
 		memset(adapters, 0, sizeof(adapters));
 		if (tuner_s2)
 			sprintf(adapters, "DVBS2-%d,", tuner_s2);
@@ -981,6 +1022,11 @@ int read_http(sockets * s)
 		if (!f)
 		{
 			http_response(s, 404, NULL, NULL, 0, 0);
+			return 0;
+		}
+		if(is_head)
+		{
+			http_response(s, 200, ctype, NULL, 0, 0);
 			return 0;
 		}
 		if (strstr(ctype, "image") || strstr(ctype, "css")
@@ -1051,7 +1097,7 @@ int ssdp_discovery(sockets * s)
 	if (s->type != TYPE_UDP)
 		return 0;
 
-	LOG("ssdp_discovery: bootid: %d deviceid: %d http: %s", opts.bootid,
+	LOGL(3, "ssdp_discovery: bootid: %d deviceid: %d http: %s", opts.bootid,
 			opts.device_id, opts.http_host);
 
 	for (i = 0; i < 3; i++)
@@ -1060,7 +1106,7 @@ int ssdp_discovery(sockets * s)
 				nt[i] + 2, app_name, version, uuid, i == 1 ? "" : nt[i],
 				opts.bootid, opts.device_id);
 		salen = sizeof(ssdp_sa);
-		LOGL(3, "Discovery packet %d:\n%s", i + 1, buf);
+		LOGL(5, "Discovery packet %d:\n%s", i + 1, buf);
 		sendto(s->sock, buf, strlen(buf), MSG_NOSIGNAL,
 				(const struct sockaddr *) &ssdp_sa, salen);
 	}
@@ -1102,17 +1148,17 @@ int ssdp_reply(sockets * s)
 	ruuid = strcasestr((const char *) s->buf, "uuid:");
 	if (ruuid && strncmp(uuid, strip(ruuid + 5), strlen(uuid)) == 0)
 	{
-		LOGL(3, "Dropping packet from the same UUID as mine (from %s:%d)",
+		LOGL(5, "Dropping packet from the same UUID as mine (from %s:%d)",
 				get_socket_rhost(s->id, ra, sizeof(ra)),
 				get_socket_rport(s->id));
 		return 0;
 	}
 
 // not my uuid
-	LOG("Received SSDP packet from %s:%d -> handle %d",
+	LOGL(4, "Received SSDP packet from %s:%d -> handle %d",
 			get_socket_rhost(s->id, ra, sizeof(ra)), get_socket_rport(s->id),
 			s->sock);
-	LOGL(3, "%s", s->buf);
+	LOGL(5, "%s", s->buf);
 
 	if (strncasecmp((const char *) s->buf, "NOTIFY", 6) == 0)
 	{
@@ -1156,11 +1202,11 @@ int ssdp_reply(sockets * s)
 	sprintf(buf, reply, get_current_timestamp(), opts.http_host, opts.xml_path,
 			app_name, version, uuid, opts.bootid, did);
 
-	LOG("ssdp_reply fd: %d -> %s:%d, bootid: %d deviceid: %d http: %s", ssdp,
+	LOGL(5, "ssdp_reply fd: %d -> %s:%d, bootid: %d deviceid: %d http: %s", ssdp,
 			get_socket_rhost(s->id, ra, sizeof(ra)), get_socket_rport(s->id),
 			opts.bootid, did, opts.http_host);
 //use ssdp (unicast) even if received to multicast address
-	LOGL(3, "%s", buf);
+	LOGL(5, "%s", buf);
 	sendto(ssdp, buf, strlen(buf), MSG_NOSIGNAL,
 			(const struct sockaddr *) &s->sa, salen);
 	return 0;

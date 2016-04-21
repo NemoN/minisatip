@@ -366,7 +366,7 @@ int dvbapi_reply(sockets * s)
 		{
 			int k_id, algo, mode;
 			SKey *k;
-			pos += 13;
+			pos += 17;
 			k_id = b[4];
 			dvbapi_copy32r(algo, b, 5);
 			dvbapi_copy32r(mode, b, 9);
@@ -396,6 +396,7 @@ SKey *get_active_key(SPid *p)
 	SKey *k;
 	adapter *ad;
 	int key = p->key;
+	int counter = 0;
 	int64_t ctime = getTick();
 	uint8_t nullcw[16] =
 	{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -413,7 +414,7 @@ SKey *get_active_key(SPid *p)
 	LOGL(3,
 			"get_active_key: searching key for pid %d, starting key %d parity %d ok %d %d",
 			p->pid, key, k->parity, k->key_ok[0], k->key_ok[1]);
-	while (k && k->enabled)
+	while (k && k->enabled && (counter ++ < 10))
 	{
 		if ((k->parity != -1) && k->key_ok[k->parity]
 				&& (ctime - k->cw_time[k->parity] > MAX_KEY_TIME)) // key expired
