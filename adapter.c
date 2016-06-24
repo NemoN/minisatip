@@ -26,7 +26,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <poll.h>
-#include <linux/ioctl.h>
+//#include <linux/ioctl.h>
+#include <sys/ioctl.h>
 
 #include "socketworks.h"
 #include "dvb.h"
@@ -57,7 +58,7 @@ void find_dvb_adapter(adapter **a);
 adapter *adapter_alloc()
 {
 	adapter *ad = malloc1(sizeof(adapter));
-
+	memset(ad, 0, sizeof(adapter));
 	/* diseqc setup */
 	ad->diseqc_param.fast = opts.diseqc_fast;
 	ad->diseqc_param.committed_no = opts.diseqc_committed_no;
@@ -76,6 +77,7 @@ adapter *adapter_alloc()
 	ad->old_hiband = -1;
 	ad->old_pol = -1;
 	ad->dmx_source = -1;
+	ad->slow_dev = 0;
 
 	return ad;
 }
@@ -109,6 +111,13 @@ int adapter_timeout(sockets *s)
 
 	if (ad->force_close)
 		return 1;
+
+	if (ad->slow_dev)
+	{
+		LOG("keeping the adapter %d open as the initialization is slow", ad->id);
+		s->rtime = getTick();
+		return 0;
+	}
 
 	if (get_streams_for_adapter(ad->id) > 0)
 	{
@@ -147,11 +156,13 @@ void request_adapter_close(adapter *ad)
 int close_adapter_for_socket(sockets * s)
 {
 	int aid = s->sid;
-
+	adapter *ad = get_adapter(aid);
 	LOG("closing DVR socket %d pos %d aid %d", s->sock, s->id, aid);
-	if (aid >= 0)
-		close_adapter(aid);
-	return 0;
+	if(ad)
+		ad->rtime = getTick();
+	if (ad)
+		return close_adapter(aid);
+	return 1;
 }
 
 int init_complete = 0;
@@ -160,6 +171,7 @@ int num_adapters = 0;
 int init_hw(int i)
 {
 	char name[100];
+	int64_t st, et;
 	adapter *ad;
 	if (i < 0 || i >= MAX_ADAPTERS)
 		return 3;
@@ -183,6 +195,7 @@ int init_hw(int i)
 	ad->fe_sock = -1;
 	ad->sock = -1;
 
+	st = getTick();
 	if (!ad->open)
 		goto NOK;
 
@@ -238,7 +251,15 @@ int init_hw(int i)
 	if (ad->post_init)
 		ad->post_init(ad);
 
-//	set_sock_lock(ad->sock, &ad->mutex); // locks automatically the adapter on reading from the DVR 
+	et = getTick();
+
+	if(et - st > 1000000)
+	{
+		LOG("Slow adapter %d detected", ad->id);
+		ad->slow_dev = 1;
+	}
+
+//	set_sock_lock(ad->sock, &ad->mutex); // locks automatically the adapter on reading from the DVR
 
 	LOG("done opening adapter %i delivery systems: %s %s %s %s", i,
 			get_delsys(ad->sys[0]), get_delsys(ad->sys[1]),
@@ -287,19 +308,20 @@ int init_all_hw()
 	return num_adapters;
 }
 
-void close_adapter(int na)
+int close_adapter(int na)
 {
 	adapter *ad;
 	init_complete = 0;
 
 	ad = get_adapter_nw(na);
 	if (!ad)
-		return;
+		return 1;
+
 	mutex_lock(&ad->mutex);
 	if (!ad->enabled)
 	{
 		mutex_unlock(&ad->mutex);
-		return;
+		return 1;
 	}
 	LOG("closing adapter %d  -> fe:%d dvr:%d", na, ad->fe, ad->dvr);
 	ad->enabled = 0;
@@ -330,6 +352,7 @@ void close_adapter(int na)
 	mutex_destroy(&ad->mutex);
 	//      if(a[na]->buf)free1(a[na]->buf);a[na]->buf=NULL;
 	LOG("done closing adapter %d", na);
+	return 1;
 }
 
 int getAdaptersCount()
@@ -484,7 +507,7 @@ int get_free_adapter(transponder *tp)
 			match = 0;
 			if (ad->sid_cnt == 0)
 				match = 1;
-			if (!compare_tunning_parameters(ad->id, tp))
+			if (!ad->enabled || !compare_tunning_parameters(ad->id, tp))
 				match = 1;
 			if (match && !init_hw(fe))
 				return fe;
@@ -556,7 +579,7 @@ void close_adapter_for_stream(int sid, int aid)
 	else
 		mark_pids_deleted(aid, sid, NULL);
 	update_pids(aid);
-//	if (a[aid]->sid_cnt == 0) 
+//	if (a[aid]->sid_cnt == 0)
 //		close_adapter (aid);
 	mutex_unlock(&ad->mutex);
 
@@ -662,7 +685,7 @@ int tune(int aid, int sid)
 #ifndef DISABLE_TABLES
 		p = find_pid(aid, 0);
 		SPid *p_all = find_pid(aid, 8192);
-		if ((!p || p->flags == 3) && (!p_all || p_all->flags == 3)) // add pid 0 if not explicitly added 
+		if ((!p || p->flags == 3) && (!p_all || p_all->flags == 3)) // add pid 0 if not explicitly added
 		{
 			LOG(
 					"Adding pid 0 to the list of pids as not explicitly added for adapter %d",
@@ -874,9 +897,9 @@ int compare_tunning_parameters(int aid, transponder * tp)
 			|| (tp->pol > 0 && tp->pol != ad->tp.pol)
 			|| (tp->sr > 1000 && tp->sr != ad->tp.sr)
 			|| (tp->mtype > 0 && tp->mtype != ad->tp.mtype))
-			
+
 		return 1;
-	
+
 	return 0;
 }
 
@@ -920,7 +943,7 @@ int set_adapter_parameters(int aid, int sid, transponder * tp)
 
 	if (ad->tp.pids) // pids can be specified in SETUP and then followed by a delpids in PLAY, make sure the behaviour is right
 	{
-		mark_pids_deleted(aid, sid, NULL);  // delete all the pids for this 
+		mark_pids_deleted(aid, sid, NULL);  // delete all the pids for this
 		if (mark_pids_add(sid, aid, ad->tp.pids) < 0)
 		{
 			mutex_unlock(&ad->mutex);
@@ -1087,7 +1110,10 @@ void free_all_adapters()
 	sockets_del(sock_signal);
 	for (i = 0; i < MAX_ADAPTERS; i++)
 		if (a[i] && a[i]->enabled)
+		{
+			a[i]->slow_dev = 0;
 			close_adapter(i);
+		}
 
 	for (i = 0; i < MAX_ADAPTERS; i++)
 		if (a[i])
