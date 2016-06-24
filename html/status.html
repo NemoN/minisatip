@@ -100,6 +100,7 @@ var key_reader	= ["$key_reader0$", "$key_reader1$", "$key_reader2$", "$key_reade
 var key_from	= ["$key_from0$", "$key_from1$", "$key_from2$", "$key_from3$", "$key_from4$", "$key_from5$", "$key_from6$", "$key_from7$", "$key_from8$", "$key_from9$", "$key_from10$", "$key_from11$", "$key_from12$", "$key_from13$", "$key_from14$", "$key_from15$" ];
 var key_protocol = ["$key_protocol0$", "$key_protocol1$", "$key_protocol2$", "$key_protocol3$", "$key_protocol4$", "$key_protocol5$", "$key_protocol6$", "$key_protocol7$", "$key_protocol8$", "$key_protocol9$", "$key_protocol10$", "$key_protocol11$", "$key_protocol12$", "$key_protocol13$", "$key_protocol14$", "$key_protocol15$" ];
 
+
 var max_adapters = 16;
 var max_streams	= 64;
 var max_keys 	= 255;
@@ -108,7 +109,7 @@ var sys			= [ "", "dvbc", "dvbcb", "dvbt", "dss", "dvbs", "dvbs2", "dvbh", "isdb
 
 var myTable = "<table id='myTable' class='display cell-border compact' cellspacing='0' width='100%'>";
 myTable += "<thead><tr><th>Tuner</th>";
-myTable += "<th class=''>Status</th>";
+myTable += "<th class='dt-center'>Status</th>";
 myTable += "<th class='dt-right'>Frequency</th>";
 myTable += "<th class='dt-right'>SR/BW</th>";
 myTable += "<th class='dt-right'>Signal</th>";
@@ -136,9 +137,9 @@ for (var i = 0; i < max_adapters; i++) {
 		csys = sys[ad_sys[i]];
 	
 	if (ad_enabled[i] == 1)
-		myTable += "<td class='dt-right enabled'><img src='" + csys + ".png' title='" + csys + "' /><br />";
+		myTable += "<td class='dt-center enabled'><img src='" + csys + ".png' title='" + csys + "' /><br />";
 	else
-		myTable += "<td class='dt-right disabled'>" + ad_allsys[i];
+		myTable += "<td class='dt-center disabled'>" + ad_allsys[i];
 	
 	if (ad_type[i] == 1 || ad_type[i] == 3) {
 		// myTable += "<small>(" + ad_phyad[i] + "," + ad_phyfd[i] +")</small>";
@@ -169,7 +170,7 @@ for (var i = 0; i < max_adapters; i++) {
 			var s2 = parseInt(ad_snr[i] / 0.15);
 		signal += "<div class='level'>SNR <div class='pBar' data-from='"+ s2 + "' data-to='" + s2 + "'></div> " + s2 + "%</div><br />";
 
-		if (ad_ber[i] > 0)
+		if (ad_ber[i] > 1)
 			signal += "<div class='level'>BER <div class='pBar' data-from='"+ ad_ber[i] + "' data-to='" + ad_ber[i] + "' data-color='red'></div> " + ad_ber[i] + "</div><br />";
 	}
 	myTable += "<td class='dt-right'>" + signal + " </td>";
